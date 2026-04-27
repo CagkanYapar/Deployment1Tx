@@ -3,7 +3,7 @@
 Code for the paper:
 
 > **Learning Coverage- and Power-Optimal Transmitter Placement from Building Maps: A Comparative Study of Direct and Indirect Neural Approaches**  
-> Çağkan Yapar, TU Berlin
+> Çağkan Yapar
 
 ## Overview
 
