@@ -740,10 +740,6 @@ class TxLocator_SIP2Net_150(nn.Module):
         return heatmap, coords
 
 
-# ==================== DCNET PROPERLY FIXED ====================
-
-
-
 def create_model_deep(arch='deepxl_150', coord_method='soft_argmax', 
                       temperature=1.0, use_masking=True, img_size=150):
     """
