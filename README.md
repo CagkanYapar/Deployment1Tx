@@ -18,19 +18,7 @@ This repository provides training and evaluation code for single-transmitter pla
 
 Available at: [IEEE DataPort](https://dx.doi.org/10.21227/wjwa-th03)
 
-### Expected data layout
 
-```
-data/
-├── buildings/           # 256×256 building maps (from RadioMapSeer)
-│   ├── 0.png
-│   ├── 1.png
-│   └── ...
-└── unified_results/     # RadioMapSeer-Deployment outputs
-    ├── best_by_power/   # Power-optimal radio maps + Tx locations
-    ├── best_by_coverage/# Coverage-optimal radio maps + Tx locations
-    └── normalized_per_map/ # Score maps (16-bit PNG + metadata)
-```
 
 ## Repository Structure
 
