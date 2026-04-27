@@ -20,19 +20,7 @@ Note on CriterionEmbedding:
     completeness and checkpoint compatibility.
 """
 
-"""
-Diffusion Models for Tx Location Prediction - FIXED FOR BATCHING
 
-KEY FIX: CriterionEmbedding now uses nn.Embedding instead of Python loop
-This enables true GPU parallelization for batched inputs!
-
-Implements three conditioning strategies:
-- Phase 1: Concatenation (simplest, fastest)
-- Phase 2: FiLM (Feature-wise Linear Modulation)
-- Phase 3: Cross-Attention (most powerful)
-
-All methods wrap existing architectures from models/discriminative.py
-"""
 
 import torch
 import torch.nn as nn
@@ -117,7 +105,7 @@ class CriterionEmbedding(nn.Module):
 
 
 # ============================================================================
-# PHASE 1: CONCATENATION CONDITIONING (Simplest)
+# CONCATENATION CONDITIONING 
 # ============================================================================
 
 def conv_block(in_ch, out_ch):
@@ -342,9 +330,7 @@ class DiffusionUNet_DeepXL_Concat(nn.Module):
         return pred_noise
 
 
-# ============================================================================
-# PHASE 2: FiLM CONDITIONING
-# ============================================================================
+
 
 
 def create_diffusion_model(conditioning="concat", img_size=150):
