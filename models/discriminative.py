@@ -41,6 +41,163 @@ def conv_block(in_ch, out_ch):
 
 
 
+def center_crop_to_match(x, target_size):
+    """Center crop x to match target spatial dimensions"""
+    _, _, h, w = x.shape
+    th, tw = target_size
+    if h == th and w == tw:
+        return x
+    dh, dw = h - th, w - tw
+    h_start = dh // 2
+    w_start = dw // 2
+    return x[:, :, h_start:h_start+th, w_start:w_start+tw]
+
+
+def soft_argmax(logits, building_mask=None, temperature=1.0, img_size=256):
+    """
+    Differentiable coordinate extraction via soft-argmax.
+    
+    CHANGE: Works with raw logits (can be negative), no sigmoid applied first!
+    """
+    batch_size = logits.size(0)
+    device = logits.device
+    h, w = logits.shape[2], logits.shape[3]
+    
+    # FIX: Resize mask if shape mismatch
+    if building_mask is not None:
+        if building_mask.shape[2:] != logits.shape[2:]:
+            building_mask = F.interpolate(building_mask.float(), size=(h, w), mode='nearest').bool()
+        
+        logits_masked = logits.clone()
+        logits_masked[building_mask] = -1e9
+    else:
+        logits_masked = logits
+    
+    # Apply temperature and softmax
+    logits_temp = logits_masked / temperature
+    flat_logits = logits_temp.view(batch_size, -1)
+    probs = F.softmax(flat_logits, dim=1)
+    probs = probs.view_as(logits)
+    
+    # Create coordinate grids
+    x_coords = torch.arange(w, device=device).float().view(1, 1, 1, w)
+    y_coords = torch.arange(h, device=device).float().view(1, 1, h, 1)
+    
+    # Scale to image size
+    if h != img_size or w != img_size:
+        scale_x = img_size / w
+        scale_y = img_size / h
+        x_coords = x_coords * scale_x
+        y_coords = y_coords * scale_y
+    
+    # Compute expected coordinates
+    x_mean = (probs * x_coords).sum(dim=[1, 2, 3])
+    y_mean = (probs * y_coords).sum(dim=[1, 2, 3])
+    
+    return y_mean, x_mean
+
+
+def center_of_mass(output, building_mask=None, img_size=256):
+    """
+    Center of mass coordinate extraction - LocUNet style!
+    
+    CRITICAL CHANGE: Works directly with raw network output (LeakyReLU),
+    NO sigmoid applied! This matches LocUNet's get_centers_of_mass().
+    """
+    batch_size = output.size(0)
+    device = output.device
+    h, w = output.shape[2], output.shape[3]
+    
+    # FIX: Resize mask if shape mismatch
+    if building_mask is not None:
+        if building_mask.shape[2:] != output.shape[2:]:
+            building_mask = F.interpolate(building_mask.float(), size=(h, w), mode='nearest').bool()
+        
+        output_masked = output.clone()
+        output_masked[building_mask] = 0  # Zero out building pixels
+    else:
+        output_masked = output
+    
+    # Normalize directly (like LocUNet) - no sigmoid!
+    # Add small epsilon to avoid division by zero
+    mass = output_masked.sum(dim=[2, 3], keepdim=True)
+    mass = torch.clamp(mass, min=1e-7)
+    probs = output_masked / mass
+    
+    # Create coordinate grids
+    x_coords = torch.arange(w, device=device).float().view(1, 1, 1, w)
+    y_coords = torch.arange(h, device=device).float().view(1, 1, h, 1)
+    
+    # Scale to image size
+    if h != img_size or w != img_size:
+        scale_x = img_size / w
+        scale_y = img_size / h
+        x_coords = x_coords * scale_x
+        y_coords = y_coords * scale_y
+    
+    # Compute center of mass
+    x_mean = (probs * x_coords).sum(dim=[2, 3])
+    y_mean = (probs * y_coords).sum(dim=[2, 3])
+    
+    # Squeeze channel dimension
+    x_mean = x_mean.squeeze(1)
+    y_mean = y_mean.squeeze(1)
+    
+    return y_mean, x_mean
+
+def hard_argmax(logits, building_mask=None, img_size=256):
+    """
+    Hard argmax coordinate extraction - finds pixel with maximum value.
+    Non-differentiable but exact.
+    
+    Args:
+        logits: (B, 1, H, W) heatmap
+        building_mask: (B, 1, H, W) boolean mask (True = building pixel to mask out)
+        img_size: Target image size for coordinate scaling
+    
+    Returns:
+        y_coords: (B,) y coordinates
+        x_coords: (B,) x coordinates
+    """
+    batch_size = logits.size(0)
+    device = logits.device
+    h, w = logits.shape[2], logits.shape[3]
+    
+    # Apply building mask if provided
+    if building_mask is not None:
+        if building_mask.shape[2] != logits.shape[2]:
+            building_mask = F.interpolate(building_mask.float(), size=(h, w), mode='nearest').bool()
+        logits_masked = logits.clone()
+        logits_masked[building_mask] = -1e9  # Set building pixels to very negative
+    else:
+        logits_masked = logits
+    
+    # Flatten spatial dimensions
+    flat_logits = logits_masked.view(batch_size, -1)  # (B, H*W)
+    
+    # Find argmax indices
+    max_indices = torch.argmax(flat_logits, dim=1)  # (B,)
+    
+    # Convert flat indices to 2D coordinates
+    y_indices = max_indices // w  # Row index
+    x_indices = max_indices % w   # Column index
+    
+    # Scale to image size if needed
+    if h != img_size or w != img_size:
+        scale_x = img_size / w
+        scale_y = img_size / h
+        x_coords = x_indices.float() * scale_x
+        y_coords = y_indices.float() * scale_y
+    else:
+        x_coords = x_indices.float()
+        y_coords = y_indices.float()
+    
+    return y_coords, x_coords
+
+
+
+
+
 class TxLocatorDeepXL_150(nn.Module):
     """
     DeepXL for 160×160: 6 levels, 2×2 bottleneck, ~50M params
@@ -163,6 +320,123 @@ class TxLocatorDeepXL_150(nn.Module):
 
 
 
+
+
+class TxLocatorDeepXL_150_Aligned(nn.Module):
+    """
+    DeepXL backbone aligned with the diffusion model's UNet.
+    
+    Identical to TxLocatorDeepXL_150 except: pool6 is removed so that
+    the bottleneck operates at 4×4 spatial resolution (matching the
+    diffusion model) instead of 2×2.
+    
+    150→75→37→18→9→4 (spatial), bottleneck at 4×4
+    64→128→256→384→512→640→768 (channels)
+    """
+    def __init__(self, coord_method='soft_argmax', temperature=1.0, 
+                 use_masking=True, img_size=150):
+        super().__init__()
+        self.coord_method = coord_method
+        self.temperature = temperature
+        self.use_masking = use_masking
+        self.img_size = img_size
+        
+        # Encoder (6 levels)
+        self.enc1 = conv_block(1, 64)
+        self.pool1 = nn.AvgPool2d(2)
+        self.enc2 = conv_block(64, 128)
+        self.pool2 = nn.AvgPool2d(2)
+        self.enc3 = conv_block(128, 256)
+        self.pool3 = nn.AvgPool2d(2)
+        self.enc4 = conv_block(256, 384)
+        self.pool4 = nn.AvgPool2d(2)
+        self.enc5 = conv_block(384, 512)
+        self.pool5 = nn.AvgPool2d(2)
+        self.enc6 = conv_block(512, 640)
+        # NOTE: No pool6 — bottleneck at 4×4, matching diffusion model
+        
+        # Bottleneck
+        self.bottleneck = conv_block(640, 768)
+        
+        # Decoder (6 levels)
+        self.up6 = nn.ConvTranspose2d(768, 640, 2, stride=2)
+        self.dec6 = conv_block(640 + 640, 640)
+        self.up5 = nn.ConvTranspose2d(640, 512, 2, stride=2)
+        self.dec5 = conv_block(512 + 512, 512)
+        self.up4 = nn.ConvTranspose2d(512, 384, 2, stride=2)
+        self.dec4 = conv_block(384 + 384, 384)
+        self.up3 = nn.ConvTranspose2d(384, 256, 2, stride=2)
+        self.dec3 = conv_block(256 + 256, 256)
+        self.up2 = nn.ConvTranspose2d(256, 128, 2, stride=2)
+        self.dec2 = conv_block(128 + 128, 128)
+        self.up1 = nn.ConvTranspose2d(128, 64, 2, stride=2)
+        self.dec1 = conv_block(64 + 64, 64)
+        
+        self.final = nn.Conv2d(64, 1, 1)
+
+        with torch.no_grad():
+            fan_in = self.final.weight.shape[1]
+            std = 10.0 / np.sqrt(fan_in)
+            self.final.weight.normal_(0, std)
+            self.final.bias.uniform_(-5.0, 5.0)
+    
+    def forward(self, x):
+        input_h, input_w = x.size(2), x.size(3)
+        # Encoder
+        e1 = self.enc1(x)
+        e2 = self.enc2(self.pool1(e1))
+        e3 = self.enc3(self.pool2(e2))
+        e4 = self.enc4(self.pool3(e3))
+        e5 = self.enc5(self.pool4(e4))
+        e6 = self.enc6(self.pool5(e5))
+        b = self.bottleneck(e6)  # No pool6 — bottleneck at 4×4
+        
+        # Decoder with skip connections
+        d6 = self.up6(b)
+        if d6.shape[2:] != e6.shape[2:]:
+            e6 = center_crop_to_match(e6, d6.shape[2:])
+        d6 = self.dec6(torch.cat([d6, e6], dim=1))
+        
+        d5 = self.up5(d6)
+        if d5.shape[2:] != e5.shape[2:]:
+            e5 = center_crop_to_match(e5, d5.shape[2:])
+        d5 = self.dec5(torch.cat([d5, e5], dim=1))
+        
+        d4 = self.up4(d5)
+        if d4.shape[2:] != e4.shape[2:]:
+            e4 = center_crop_to_match(e4, d4.shape[2:])
+        d4 = self.dec4(torch.cat([d4, e4], dim=1))
+        
+        d3 = self.up3(d4)
+        if d3.shape[2:] != e3.shape[2:]:
+            e3 = center_crop_to_match(e3, d3.shape[2:])
+        d3 = self.dec3(torch.cat([d3, e3], dim=1))
+        
+        d2 = self.up2(d3)
+        if d2.shape[2:] != e2.shape[2:]:
+            e2 = center_crop_to_match(e2, d2.shape[2:])
+        d2 = self.dec2(torch.cat([d2, e2], dim=1))
+        
+        d1 = self.up1(d2)
+        if d1.shape[2:] != e1.shape[2:]:
+            e1 = center_crop_to_match(e1, d1.shape[2:])
+        d1 = self.dec1(torch.cat([d1, e1], dim=1))
+        
+        logits = self.final(d1)
+        if logits.size(2) != input_h or logits.size(3) != input_w:
+            logits = F.interpolate(logits, size=(input_h, input_w), 
+                             mode='bilinear', align_corners=False)
+        building_mask = (x > 0.1) if self.use_masking else None
+        
+        if self.coord_method == 'soft_argmax':
+            y, x_coord = soft_argmax(logits, building_mask, self.temperature, self.img_size)
+        elif self.coord_method == 'hard_argmax':
+            y, x_coord = hard_argmax(logits, building_mask, self.img_size)
+        else:  # center_of_mass
+            y, x_coord = center_of_mass(logits, building_mask, self.img_size)
+        coords = torch.stack([y, x_coord], dim=1)
+        
+        return logits, coords
 
 def convrelu_DCsingle(in_channels, out_channels, kernel=3, padding=1):
     """Conv + BatchNorm + ReLU"""
@@ -740,6 +1014,10 @@ class TxLocator_SIP2Net_150(nn.Module):
         return heatmap, coords
 
 
+# ==================== DCNET PROPERLY FIXED ====================
+
+
+
 def create_model_deep(arch='deepxl_150', coord_method='soft_argmax', 
                       temperature=1.0, use_masking=True, img_size=150):
     """
@@ -763,6 +1041,7 @@ def create_model_deep(arch='deepxl_150', coord_method='soft_argmax',
     
     models = {
         'deepxl_150': TxLocatorDeepXL_150,
+        'deepxl_150_aligned': TxLocatorDeepXL_150_Aligned,
         'pmnet_150': TxLocator_PMNet_150,
         'sip2net_150': TxLocator_SIP2Net_150,
         'dcnet_150': TxLocator_DCNet_Single_150,
