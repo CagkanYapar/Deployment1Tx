@@ -2,7 +2,7 @@
 
 Code for the paper:
 
-> **Learning Coverage- and Power-Optimal Transmitter Placement from Building Maps: A Comparative Study of Direct and Indirect Neural Approaches**  
+> **Learning Coverage- and Power-Optimal Transmitter Placement from City Maps: A Comparative Study of Direct and Indirect Neural Approaches**  
 > Çağkan Yapar
 
 ## Overview
@@ -14,7 +14,7 @@ This repository provides training and evaluation code for single-transmitter pla
 
 ## Dataset
 
-**RadioMapSeer-Deployment** — 167,525 urban building scenarios with dual ground-truth labels (coverage-optimal and power-optimal transmitter locations), obtained by exhaustive per-pixel SAIPP-Net evaluation.
+**RadioMapSeer-Deployment** — 167,525 urban scenarios with dual ground-truth labels (coverage-optimal and power-optimal transmitter locations), obtained by exhaustive per-pixel SAIPP-Net evaluation.
 
 Available at: [IEEE DataPort](https://dx.doi.org/10.21227/wjwa-th03)
 
@@ -188,9 +188,15 @@ python -m evaluation.eval_union \
 
 ```bibtex
 @article{yapar2026deployment1tx,
-  title={Learning Coverage- and Power-Optimal Transmitter Placement from Building Maps: A Comparative Study of Direct and Indirect Neural Approaches},
-  author={Yapar, {\c{C}}a{\u{g}}kan},
-  year={2026}
+title = {Learning coverage- and power-optimal transmitter placement from city maps: A comparative study of direct and indirect neural approaches},
+journal = {Computer Communications},
+volume = {257},
+pages = {108621},
+year = {2026},
+issn = {0140-3664},
+doi = {https://doi.org/10.1016/j.comcom.2026.108621},
+url = {https://www.sciencedirect.com/science/article/pii/S0140366426002112},
+author = {{\c{C}}a{\u{g}}kan Yapar}
 }
 ```
 
